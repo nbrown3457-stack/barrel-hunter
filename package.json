@@ -1,5 +1,5 @@
 {
-  "name": "statfilter",
+  "name": "rotofilter",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -10,14 +10,13 @@
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",
-    "@supabase/auth-helpers-nextjs": "^0.15.0",
     "@supabase/auth-ui-react": "^0.4.7",
     "@supabase/auth-ui-shared": "^0.1.8",
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.89.0",
-    "next": "16.0.10",
-    "react": "19.2.1",
-    "react-dom": "19.2.1"
+    "next": "^15.5.9",
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -25,7 +24,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.0.10",
+    "eslint-config-next": "15.1.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

@@ -19,7 +19,7 @@ export default function LeagueSyncModal({ onClose }: LeagueSyncModalProps) {
 
         {/* THE MAGIC BUTTON */}
         <a
-          href="/api/auth/yahoo/login"
+          href="/api/auth/login"
           className="block w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded transition duration-200"
         >
           Connect Yahoo Account
