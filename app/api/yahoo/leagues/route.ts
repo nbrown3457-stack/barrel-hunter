@@ -2,44 +2,59 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 
 export async function GET() {
-  // FIX: Add 'await' because cookies() is async in Next.js 15+
   const cookieStore = await cookies();
   const accessToken = cookieStore.get('yahoo_access_token')?.value;
 
   if (!accessToken) {
-    return NextResponse.json({ error: "Not connected to Yahoo. Please sync again." }, { status: 401 });
+    return NextResponse.json({ error: "Not connected" }, { status: 401 });
   }
 
   try {
-    // 1. Fetch the user's teams
+    // 1. Fetch HISTORY (game_codes=mlb gets all seasons, not just current)
     const teamsResponse = await fetch(
-      'https://fantasysports.yahooapis.com/fantasy/v2/users;use_login=1/games;game_keys=mlb/teams?format=json', 
+      'https://fantasysports.yahooapis.com/fantasy/v2/users;use_login=1/games;game_codes=mlb/teams?format=json', 
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     
     const teamsData: any = await teamsResponse.json();
     
-    // 2. Extract the first Team Key found
+    // 2. Hunt for a Valid Team
     let teamKey = null;
+    let seasonFound = null;
+
     try {
-        const game = teamsData.fantasy_content.users[0].games[0];
-        const league = game.leagues[0];
-        const team = league.teams[0];
-        teamKey = team.team_key;
+        const games = teamsData.fantasy_content.users[0].games;
+        
+        // Loop through all seasons (2026, 2025, 2024...)
+        // Yahoo returns games as an object, not a simple array
+        for (const key in games) {
+            const game = games[key];
+            if (game.game && game.leagues && game.leagues[0].teams) {
+                // Found a season with teams!
+                teamKey = game.leagues[0].teams[0].team_key;
+                seasonFound = game.game[0].season;
+                break; // Stop looking, we found one
+            }
+        }
+
+        if (!teamKey) {
+             return NextResponse.json({ error: "No teams found in ANY season.", raw_data: teamsData });
+        }
+
     } catch (e) {
-        return NextResponse.json({ error: "No teams found. Are you in a 2024/2025 MLB league?", raw_data: teamsData });
+        return NextResponse.json({ error: "Error parsing historical games", raw_data: teamsData });
     }
 
-    // 3. Fetch that specific team's ROSTER
+    // 3. Fetch the Roster from that Past Season
     const rosterResponse = await fetch(
         `https://fantasysports.yahooapis.com/fantasy/v2/team/${teamKey}/roster?format=json`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     const rosterData: any = await rosterResponse.json();
 
-    // 4. Return the RAW data
     return NextResponse.json({ 
-        debug_mode: true, 
+        success: true,
+        season: seasonFound,
         team_key: teamKey,
         roster_sample: rosterData 
     });
