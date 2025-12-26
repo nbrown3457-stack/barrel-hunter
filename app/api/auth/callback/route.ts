@@ -1,20 +1,26 @@
-import { NextResponse } from "next/server";
+import { NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const code = searchParams.get("code");
-  const { YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET } = process.env;
-  
-  // This must match the login file exactly
-  // Uses the variable we set in .env.local (localhost) or Vercel (rotofilter.com)
-const REDIRECT_URI = 'https://www.rotofilter.com/api/auth/callback';
-
-  if (!code) {
-    return NextResponse.json({ error: "No code returned from Yahoo" }, { status: 400 });
-  }
-
   try {
-    // 1. Trade the "Code" for an "Access Token"
+    const { searchParams } = new URL(request.url);
+    const code = searchParams.get('code');
+    const error = searchParams.get('error');
+
+    // 1. HARDCODED URI TO MATCH YAHOO EXACTLY
+    const REDIRECT_URI = 'https://www.rotofilter.com/api/auth/callback';
+
+    if (error) {
+      return NextResponse.json({ error: "Yahoo Error", details: error });
+    }
+
+    if (!code) {
+      return NextResponse.json({ error: "No code returned" }, { status: 400 });
+    }
+
+    const { YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET } = process.env;
+
+    // 2. Exchange Code for Token
     const tokenResponse = await fetch("https://api.login.yahoo.com/oauth2/get_token", {
       method: "POST",
       headers: {
@@ -23,10 +29,9 @@ const REDIRECT_URI = 'https://www.rotofilter.com/api/auth/callback';
           `${YAHOO_CLIENT_ID}:${YAHOO_CLIENT_SECRET}`
         ).toString("base64")}`,
       },
-    body: new URLSearchParams({
+      body: new URLSearchParams({
         grant_type: "authorization_code",
-        // HARDCODED: No variables allowed!
-        redirect_uri: "https://www.rotofilter.com/api/auth/callback",
+        redirect_uri: REDIRECT_URI,
         code: code,
       }),
     });
@@ -34,24 +39,17 @@ const REDIRECT_URI = 'https://www.rotofilter.com/api/auth/callback';
     const tokens = await tokenResponse.json();
 
     if (tokens.error) {
-   // DEBUG: Show me exactly what URI we sent!
-   return NextResponse.json({ 
-     error: tokens.error_description, 
-     debug_sent_uri: REDIRECT_URI, // <--- This is the spy
-     debug_client_id: YAHOO_CLIENT_ID 
-   }, { status: 400 });
-}
+      return NextResponse.json({ error: tokens.error, description: tokens.error_description });
+    }
 
-    // 2. SUCCESS! We have the token.
-    // Redirect the user back to your site's "League Sync" page.
+    // 3. Success! Redirect to success page
     const response = NextResponse.redirect("https://www.rotofilter.com/league-sync?status=success");
     
-    // 3. Save the token in a secure cookie so your app can use it
     response.cookies.set("yahoo_access_token", tokens.access_token, {
-      httpOnly: true, // JavaScript can't steal it
-      secure: true,   // HTTPS only
+      httpOnly: true,
+      secure: true,
       path: "/",
-      maxAge: 3600    // Lasts 1 hour
+      maxAge: 3600
     });
 
     return response;
