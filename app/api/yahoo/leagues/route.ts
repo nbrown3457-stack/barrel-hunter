@@ -16,19 +16,27 @@ export async function GET() {
   }
 
   try {
+    // 1. Fetch all baseball history
     const teamsResponse = await fetch(
       'https://fantasysports.yahooapis.com/fantasy/v2/users;use_login=1/games;game_codes=mlb/teams?format=json', 
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     const teamsData: any = await teamsResponse.json();
 
-    // 1. RECURSIVE SEARCH: Find the first team_key in the entire JSON
     let teamKey: string | null = null;
     
+    // 2. Identify Games and Sort by Season Descending (2026, 2025, 2024...)
+    const games = teamsData?.fantasy_content?.users?.[0]?.user?.[1]?.games;
+    if (!games) return NextResponse.json({ error: "No games found" });
+
+    const sortedGames = Object.values(games)
+      .filter((g: any) => g && typeof g === 'object' && g.game)
+      .sort((a: any, b: any) => parseInt(b.game[0].season) - parseInt(a.game[0].season));
+
+    // 3. Recursive Helper to find the first team_key in the newest season that has a roster
     const findTeamKey = (obj: any): string | null => {
         if (!obj || typeof obj !== 'object') return null;
         if (obj.team_key) return obj.team_key;
-        
         for (const value of Object.values(obj)) {
             const result = findTeamKey(value);
             if (result) return result;
@@ -36,37 +44,31 @@ export async function GET() {
         return null;
     };
 
-    teamKey = findTeamKey(teamsData);
-
-    if (!teamKey) {
-        return NextResponse.json({ error: "No team key found in Yahoo data", debug: teamsData });
+    // Check each season (newest first) for an active team
+    for (const gameObj of (sortedGames as any[])) {
+        // Skip games that have an empty teams array (like 2026 right now)
+        if (gameObj.teams && Object.keys(gameObj.teams).length > 0) {
+            teamKey = findTeamKey(gameObj);
+            if (teamKey) break; 
+        }
     }
 
-    // 2. Fetch the Roster
+    if (!teamKey) return NextResponse.json({ error: "No active roster found in history" });
+
+    // 4. Fetch the Roster and Map IDs
     const rosterResponse = await fetch(
         `https://fantasysports.yahooapis.com/fantasy/v2/team/${teamKey}/roster?format=json`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     const rosterData: any = await rosterResponse.json();
     
-    // 3. Flatten the Player Data
     const players: any[] = [];
     const findPlayers = (obj: any) => {
         if (!obj || typeof obj !== 'object') return;
-        if (obj.player) {
-            players.push(obj.player);
-            return;
-        }
-        for (const value of Object.values(obj)) {
-            findPlayers(value);
-        }
+        if (obj.player) { players.push(obj.player); return; }
+        for (const value of Object.values(obj)) { findPlayers(value); }
     };
-
     findPlayers(rosterData);
-
-    if (players.length === 0) {
-        return NextResponse.json({ error: "No players found on roster", debug: rosterData });
-    }
 
     const roster = [];
     const yahooIds: string[] = [];
@@ -86,7 +88,7 @@ export async function GET() {
         }
     }
 
-    // 4. Batch lookup in your Supabase Rosetta Stone
+    // 5. Connect to Supabase "Rosetta Stone"
     const { data: mappings } = await supabase
         .from('player_mappings')
         .select('yahoo_id, mlb_id')
@@ -97,11 +99,7 @@ export async function GET() {
         mlb_id: mappings?.find(m => m.yahoo_id === player.yahoo_id)?.mlb_id || null
     }));
 
-    return NextResponse.json({ 
-        success: true, 
-        team_found: teamKey, 
-        roster: finalRoster 
-    });
+    return NextResponse.json({ success: true, team_key: teamKey, roster: finalRoster });
 
   } catch (error) {
     return NextResponse.json({ error: "Sync failed", details: String(error) }, { status: 500 });
