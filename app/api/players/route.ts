@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
+import { cookies } from 'next/headers';
 
 // --------------------------------------------------------------------------
 // CONFIGURATION
 // --------------------------------------------------------------------------
 const DEFAULT_YEAR = '2025'; 
-// 🔥 ANCHOR DATE: The relative filters (Last 7/30) will look back from here
 const SEASON_END_DATE = '2025-09-29'; 
+
+// Initialize Supabase Client
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY! // Use Service Role for backend bypass
+);
 
 // --------------------------------------------------------------------------
 // HELPER: FETCH SAVANT DATA (Unchanged)
@@ -64,45 +71,24 @@ async function fetchSavantData(type: 'batter' | 'pitcher' | 'sprint' | 'fielding
 }
 
 // --------------------------------------------------------------------------
-// HELPER: DATE CALCULATOR (FIXED)
+// HELPER: DATE CALCULATOR (Unchanged)
 // --------------------------------------------------------------------------
 function getDateRange(range: string, customStart?: string | null, customEnd?: string | null) {
-  // 1. Handle Custom Dates First
-  if (range === 'custom' && customStart && customEnd) {
-    return { start: customStart, end: customEnd };
-  }
+  if (range === 'custom' && customStart && customEnd) return { start: customStart, end: customEnd };
+  if (range === 'season_curr' || range === 'season_last' || range === 'pace_season') return null;
 
-  // 2. Handle Season/Pace Modes (Return null to use the efficient 'season' endpoint)
-  if (range === 'season_curr' || range === 'season_last' || range === 'pace_season') {
-    return null;
-  }
-
-  // 3. Handle Relative Dates (Anchored to End of 2025 Season)
   const end = new Date(SEASON_END_DATE);
-  const start = new Date(SEASON_END_DATE); // Clone it
+  const start = new Date(SEASON_END_DATE);
 
   switch (range) {
-    case 'last_7': 
-      start.setDate(end.getDate() - 7); 
-      break;
-    case 'last_30': 
-      start.setDate(end.getDate() - 30); 
-      break;
-    case 'last_90': 
-      start.setDate(end.getDate() - 90); 
-      break;
-    case 'yesterday': 
-      // "Yesterday" relative to season end is the last day of season
-      start.setDate(end.getDate() - 1); 
-      break;
-    default: 
-      return null; 
+    case 'last_7': start.setDate(end.getDate() - 7); break;
+    case 'last_30': start.setDate(end.getDate() - 30); break;
+    case 'last_90': start.setDate(end.getDate() - 90); break;
+    case 'yesterday': start.setDate(end.getDate() - 1); break;
+    default: return null; 
   }
 
-  return { 
-    start: start.toISOString().split('T')[0], 
-    end: end.toISOString().split('T')[0] 
-  };
+  return { start: start.toISOString().split('T')[0], end: end.toISOString().split('T')[0] };
 }
 
 const fetchJson = async (url: string) => {
@@ -123,9 +109,12 @@ export async function GET(request: NextRequest) {
     const customStart = searchParams.get('start');
     const customEnd = searchParams.get('end');
 
+    // GET LEAGUE CONTEXT FROM COOKIES
+    const cookieStore = await cookies();
+    const activeLeagueKey = cookieStore.get('active_league_key')?.value;
+    const activeTeamKey = cookieStore.get('active_team_key')?.value;
+
     let targetYear = DEFAULT_YEAR;
-    
-    // Get calculated dates (will return NULL for season_curr/pace_season)
     const dates = getDateRange(range, customStart, customEnd);
     
     if (dates && dates.start) {
@@ -135,27 +124,37 @@ export async function GET(request: NextRequest) {
     }
 
     // 1. SETUP URLS
-    const sportIds = "1"; // MLB Only for stability
-    let statsParams = "";
+    const sportIds = "1";
+    let statsParams = dates 
+      ? `stats=byDateRange&startDate=${dates.start}&endDate=${dates.end}&group=hitting,pitching&sportId=${sportIds}&limit=3000`
+      : `stats=season&season=${targetYear}&group=hitting,pitching&sportId=${sportIds}&limit=3000`;
 
-    if (dates) {
-      // DATE RANGE MODE: Specific start/end (Last 30, Custom)
-      statsParams = `stats=byDateRange&startDate=${dates.start}&endDate=${dates.end}&group=hitting,pitching&sportId=${sportIds}&limit=3000`;
-    } else {
-      // SEASON MODE: Full year totals (Fastest)
-      statsParams = `stats=season&season=${targetYear}&group=hitting,pitching&sportId=${sportIds}&limit=3000`;
-    }
-
-    // 2. PARALLEL FETCH
-    const [rosterData, allStats, savantBatters, savantPitchers, savantSprint, savantFielding, savantMovement] = await Promise.all([
+    // 2. PARALLEL FETCH (Includes Supabase Ownership Check)
+    const [
+      rosterData, 
+      allStats, 
+      savantBatters, 
+      savantPitchers, 
+      savantSprint, 
+      savantFielding, 
+      savantMovement,
+      leagueOwnership // Our new Supabase data
+    ] = await Promise.all([
       fetchJson(`https://statsapi.mlb.com/api/v1/sports/1/players?season=${targetYear}&gameType=R`),
       fetchJson(`https://statsapi.mlb.com/api/v1/stats?${statsParams}`),
       fetchSavantData('batter', targetYear),
       fetchSavantData('pitcher', targetYear),
       fetchSavantData('sprint', targetYear),
       fetchSavantData('fielding', targetYear),
-      fetchSavantData('movement', targetYear)
+      fetchSavantData('movement', targetYear),
+      activeLeagueKey ? supabase.from('league_rosters').select('yahoo_id, team_key').eq('league_key', activeLeagueKey) : Promise.resolve({ data: [] })
     ]);
+
+    // Build Ownership Map for O(1) Lookup
+    const ownershipMap = new Map();
+    leagueOwnership.data?.forEach((r: any) => {
+      ownershipMap.set(r.yahoo_id.toString(), r.team_key);
+    });
 
     // 3. BUILD MASTER MAP
     const masterMap = new Map();
@@ -169,7 +168,7 @@ export async function GET(request: NextRequest) {
           team: mapTeamIdToAbbr(p.currentTeam?.id),
           position: p.primaryPosition?.abbreviation || "DH",
           level: 'mlb',
-          isRostered: true,
+          isRosteredInMLB: true, // Renamed to distinguish from Yahoo rostered
           mlbInfo: p,
           stats: {}, 
           type: p.primaryPosition?.code === '1' ? 'pitcher' : 'batter'
@@ -190,11 +189,10 @@ export async function GET(request: NextRequest) {
               team: s.team.abbreviation || 'FA',
               position: s.position.abbreviation,
               level: 'mlb',
-              isRostered: false,
+              isRosteredInMLB: false,
               stats: {},
               type: type
             };
-            
             existing.stats = s.stat;
             masterMap.set(id, existing);
           });
@@ -202,7 +200,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // 4. FINAL MERGE
+    // 4. FINAL MERGE & LEAGUE FILTERING
     const players = Array.from(masterMap.values()).map((p: any) => {
       const mlbInfo = p.mlbInfo || rosterData?.people?.find((r: any) => r.id === p.id);
       const isPitcher = p.type === 'pitcher';
@@ -217,13 +215,23 @@ export async function GET(request: NextRequest) {
       const calculatedCSW = (safeAdv.called_strike_pct || 0) + (safeAdv.whiff_pct || 0); 
       const wrcProxy = safeAdv.woba ? Math.round(((safeAdv.woba / 0.315) * 100)) : 100;
 
+      // Determine League Availability
+      // Note: This assumes MLB ID matches your Yahoo Sync ID. 
+      // If they differ, you'll need to use your 'player_mappings' table here.
+      const ownerTeamKey = ownershipMap.get(p.id.toString());
+      let availability = 'AVAILABLE';
+      if (ownerTeamKey) {
+        availability = (ownerTeamKey === activeTeamKey) ? 'MY_TEAM' : 'ROSTERED';
+      }
+
       return {
         id: p.id,
         name: p.name,
         team: p.team,
         position: p.position,
         level: p.level,
-        isRostered: p.isRostered,
+        availability, // 'AVAILABLE' | 'MY_TEAM' | 'ROSTERED'
+        isRosteredInMLB: p.isRosteredInMLB,
         jerseyNumber: mlbInfo?.primaryNumber || "--",
         info: {
           age: mlbInfo?.currentAge || 0,
@@ -231,10 +239,8 @@ export async function GET(request: NextRequest) {
           draft: mlbInfo?.draftYear ? `${mlbInfo.draftYear}` : "--",
         },
         stats: {
-          // Volume Stats for Pace Calculation
           ab: stdStats.atBats || 0,
           ip: parseFloat(stdStats.inningsPitched || 0),
-
           avg: safeFloat(stdStats.avg),
           hr: stdStats.homeRuns || 0,
           rbi: stdStats.rbi || 0,
