@@ -359,32 +359,31 @@ export default function Home() {
   // --- SAFE FETCH: WRAPPED IN TRY/CATCH TO PREVENT CRASHING ---
   const fetchPlayers = useCallback(async () => {
     setLoading(true);
+    
+    // 1. Create a timeout so it never spins forever
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error("Request timed out")), 5000)
+    );
+
     try {
       let query = `/api/players?range=${dateRange === 'pace_season' ? 'season_curr' : dateRange}`;
       if (dateRange === 'custom') {
         query += `&start=${customStart}&end=${customEnd}`;
       }
       
-      const res = await fetch(query);
-      if (!res.ok) {
-        console.warn("API Failed - likely missing DB column. Loading empty list.");
-        setPlayers([]); 
-        return; 
-      }
+      // 2. Race the API against the 5-second timer
+      const res: any = await Promise.race([fetch(query), timeoutPromise]);
+      
+      if (!res.ok) throw new Error("API Failed");
       
       const data = await res.json();
+      setPlayers(Array.isArray(data) ? data : []);
       
-      if (Array.isArray(data)) {
-        setPlayers(data);
-      } else {
-        console.error("API returned invalid data:", data);
-        setPlayers([]); 
-      }
     } catch (err) {
-      console.error("Failed to load players - using fallback:", err);
-      setPlayers([]); // This prevents the infinite spinner loop!
+      console.error("Load failed (using empty list):", err);
+      setPlayers([]); // Force empty list so UI appears
     } finally {
-      setLoading(false); // ALWAYS turn off loading
+      setLoading(false); // KILL THE SPINNER
     }
   }, [dateRange, customStart, customEnd]);
 
@@ -393,6 +392,18 @@ export default function Home() {
       fetchPlayers();
     }
   }, [dateRange, fetchPlayers]);
+
+// --- WATCHDOG FIX: Force spinner off after 3 seconds ---
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (loading) {
+        console.warn("Watchdog: Force killing spinner");
+        setLoading(false);
+      }
+    }, 3000); 
+    return () => clearTimeout(timer);
+  }, [loading]);
+
 
   const applyCustomDates = () => {
     if (dateRange === 'custom' && customStart && customEnd) {
@@ -627,7 +638,7 @@ export default function Home() {
       {renderCompareModal()}
       
       {/* TOP NAV: Integrated Switcher & NO CONDITIONAL LOCKS */}
-      <nav style={{ position: 'sticky', top: 0, zIndex: 100, background: 'rgba(20, 20, 20, 0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 4px 20px rgba(0,0,0,0.3)' }}>
+<nav style={{ position: 'sticky', top: 0, zIndex: 100, background: '#111', borderBottom: '1px solid #333', height: '64px', display: 'flex', alignItems: 'center', padding: '0 24px' }}>
         <div style={{ maxWidth: 1600, margin: '0 auto', height: '64px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '32px' }}>
             <div onClick={handleGlobalReset} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -680,7 +691,17 @@ export default function Home() {
       </div>
 
       {/* MAIN CONTAINER FIXED FOR WHITE BORDER ISSUE */}
-      <main style={{ padding: "clamp(12px, 3vw, 24px)", maxWidth: 1600, margin: "0 auto", fontFamily: "system-ui", flex: "1 0 auto", width: "100%", display: "flex", flexDirection: "column" }}>
+      <main style={{ 
+  padding: "24px", 
+  maxWidth: "100%", /* Allow it to fill the screen */
+  width: "1600px", /* Target width */
+  margin: "0 auto", 
+  fontFamily: "system-ui", 
+  flex: "1 0 auto", 
+  display: "flex", 
+  flexDirection: "column",
+  background: "transparent" /* Remove any white background on the container itself */
+}}>
         
         {/* PRESET TABS */}
         <div style={{ marginBottom: 24, marginTop: 24 }}>
