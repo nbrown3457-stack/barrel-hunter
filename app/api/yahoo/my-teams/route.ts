@@ -10,46 +10,64 @@ export async function GET() {
   }
 
   try {
+    // 1. Fetch every MLB game/league the user has ever been in
     const response = await fetch(
       'https://fantasysports.yahooapis.com/fantasy/v2/users;use_login=1/games;game_codes=mlb/teams?format=json',
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
     const data = await response.json();
 
-    // Map to store the "Newest" team found for each unique league
     const leagueMap: Record<string, any> = {};
     
+    // 2. THE DEEP-SCAN DIGGER
+    // This function doesn't care about the "Path". It just looks for Team Objects.
     const findTeams = (obj: any) => {
       if (!obj || typeof obj !== 'object') return;
 
-      if (obj.team_key && obj.name && typeof obj.name === 'string') {
-        const parts = obj.team_key.split('.');
-        const seasonYear = parseInt(parts[0]);
-        // The league unique identifier is usually the second and third parts: "l.12345"
-        const leagueId = `${parts[1]}.${parts[2]}`; 
-        const leagueKey = `${parts[0]}.${parts[1]}.${parts[2]}`;
+      // Yahoo often uses arrays for team data like: "team": [{ "team_key": "..." }, { "name": "..." }]
+      // If it's an array, we scan each item
+      if (Array.isArray(obj)) {
+        // Look for a team_key and name inside the array elements
+        const teamKeyObj = obj.find((i: any) => i && i.team_key);
+        const nameObj = obj.find((i: any) => i && i.name);
 
-        // If we haven't seen this league yet, OR this team is from a newer season than the one we stored
-        if (!leagueMap[leagueId] || seasonYear > leagueMap[leagueId].seasonYear) {
-          leagueMap[leagueId] = {
-            team_key: obj.team_key,
-            team_name: obj.name,
-            league_key: leagueKey,
-            seasonYear: seasonYear,
-            // We can add the league name here if we find it in the recursion
-          };
+        if (teamKeyObj && nameObj && typeof nameObj.name === 'string') {
+          processTeam(teamKeyObj.team_key, nameObj.name);
         }
+        
+        // Continue digging into array items
+        obj.forEach(item => findTeams(item));
+        return;
       }
 
-      const values = Array.isArray(obj) ? obj : Object.values(obj);
-      for (const value of values) {
-        findTeams(value);
+      // If it's a standard object with the keys directly on it
+      if (obj.team_key && obj.name && typeof obj.name === 'string') {
+        processTeam(obj.team_key, obj.name);
+      }
+
+      // Keep digging into every sub-property
+      Object.values(obj).forEach(val => findTeams(val));
+    };
+
+    // Helper to group teams by League and keep the newest one
+    const processTeam = (teamKey: string, teamName: string) => {
+      const parts = teamKey.split('.');
+      const seasonYear = parseInt(parts[0]);
+      const leagueId = `${parts[1]}.${parts[2]}`; 
+      const leagueKey = `${parts[0]}.${parts[1]}.${parts[2]}`;
+
+      if (!leagueMap[leagueId] || seasonYear > leagueMap[leagueId].seasonYear) {
+        leagueMap[leagueId] = {
+          team_key: teamKey,
+          team_name: teamName,
+          league_key: leagueKey,
+          seasonYear: seasonYear
+        };
       }
     };
 
     findTeams(data);
 
-    // Convert our map back into a clean array for the dropdown
     const finalTeams = Object.values(leagueMap).sort((a, b) => b.seasonYear - a.seasonYear);
 
     return NextResponse.json({ 
