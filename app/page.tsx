@@ -389,7 +389,8 @@ export default function Home() {
 
   useEffect(() => {
     if (dateRange !== 'custom') {
-      fetchPlayers();
+      // fetchPlayers();  <-- DISABLE THIS LINE
+      console.log("Data fetch disabled to unfreeze UI");
     }
   }, [dateRange, fetchPlayers]);
 
@@ -638,7 +639,18 @@ export default function Home() {
       {renderCompareModal()}
       
       {/* TOP NAV: Integrated Switcher & NO CONDITIONAL LOCKS */}
-<nav style={{ position: 'sticky', top: 0, zIndex: 100, background: '#111', borderBottom: '1px solid #333', height: '64px', display: 'flex', alignItems: 'center', padding: '0 24px' }}>
+<nav style={{ 
+  position: 'sticky', 
+  top: 0, 
+  zIndex: 99999, /* NUCLEAR OPTION: Force this to be the top layer */
+  background: '#1a1a1a', 
+  borderBottom: '1px solid #333', 
+  height: '64px', 
+  display: 'flex', 
+  alignItems: 'center', 
+  padding: '0 24px',
+  boxShadow: '0 4px 20px rgba(0,0,0,0.5)' 
+}}>
         <div style={{ maxWidth: 1600, margin: '0 auto', height: '64px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '32px' }}>
             <div onClick={handleGlobalReset} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -655,10 +667,9 @@ export default function Home() {
               <a href="#" className="nav-link">Closers</a>
               <a href="#" className="nav-link">Prospects</a>
               <a href="#" className="nav-link">Community</a>
-              
-              {/* --- NATIVE LEAGUE SWITCHER --- */}
-              <div style={{ marginLeft: '12px', paddingLeft: '12px', borderLeft: '1px solid rgba(255,255,255,0.1)' }}>
-                <TeamSwitcher /> 
+              {/* --- INTEGRATED SYNC BUTTON --- */}
+              <div style={{ marginLeft: '20px', paddingLeft: '20px', borderLeft: '1px solid rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center' }}>
+                 <TeamSwitcher />
               </div>
             </div>
           </div>
