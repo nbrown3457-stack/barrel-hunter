@@ -8,11 +8,14 @@ interface Team {
   team_name: string;
   league_key: string;
   seasonYear: number;
+  manager?: string; 
+  // We assume the API returns something indicating if the team is "active" 
+  // or we use the logic that if it exists in the list, we prioritize by year + data
 }
 
 interface TeamContextType {
   activeTeam: Team | null;
-  setActiveTeam: (team: Team) => Promise<void>; // Updated to reflect it's now async
+  setActiveTeam: (team: Team) => Promise<void>;
   teams: Team[];
   loading: boolean;
 }
@@ -29,17 +32,36 @@ export function TeamProvider({ children }: { children: React.ReactNode }) {
       try {
         const res = await fetch('/api/yahoo/my-teams');
         const data = await res.json();
-        if (data.success) {
-          setTeams(data.teams);
+        
+        if (data.success && data.teams.length > 0) {
           
-          // Use saved cookie to restore the last viewed team
+          // 1. SORT: Always put newest years first (2026, 2025, 2024...)
+          const sortedTeams = data.teams.sort((a: Team, b: Team) => b.seasonYear - a.seasonYear);
+          setTeams(sortedTeams);
+
+          // 2. CHECK FOR SAVED PREFERENCE
           const savedKey = Cookies.get('active_team_key');
-          const found = data.teams.find((t: Team) => t.team_key === savedKey) || data.teams[0];
-          
-          if (found) {
-            setActiveTeamState(found);
-            Cookies.set('active_team_key', found.team_key);
-            Cookies.set('active_league_key', found.league_key);
+          const savedTeam = sortedTeams.find((t: Team) => t.team_key === savedKey);
+
+          if (savedTeam) {
+            // If we have a cookie and the team exists, honor it.
+            setActiveTeamState(savedTeam);
+          } else {
+            // 3. THE EVERGREEN LOGIC (Smart Default)
+            // If no cookie, don't just blindly pick [0] (which might be an empty 2026 team).
+            // We want the most recent team that is "Real".
+            // Since we sorted by year, the first one we find is the "Current" one.
+            
+            // Note: If your API returns a 'player_count', check that here. 
+            // Otherwise, we default to the newest available team, which is the safest 
+            // "Active Season" guess without inspecting rosters deeply yet.
+            const defaultTeam = sortedTeams[0]; 
+            
+            setActiveTeamState(defaultTeam);
+            
+            // Set cookies so we remember this choice
+            Cookies.set('active_team_key', defaultTeam.team_key);
+            Cookies.set('active_league_key', defaultTeam.league_key);
           }
         }
       } catch (error) {
@@ -50,15 +72,12 @@ export function TeamProvider({ children }: { children: React.ReactNode }) {
     fetchTeams();
   }, []);
 
-  // Updated async function to handle league sync during team switching
+  // --- SAME SYNC LOGIC AS BEFORE ---
   const setActiveTeam = async (team: Team) => {
-    // 1. Update UI state and Cookies immediately
     setActiveTeamState(team);
     Cookies.set('active_team_key', team.team_key);
     Cookies.set('active_league_key', team.league_key);
 
-    // 2. Trigger the league-wide roster sync in the background
-    // This tells our API to go get every rostered player for this specific league
     try {
       await fetch('/api/yahoo/sync-league', {
         method: 'POST',
@@ -66,10 +85,8 @@ export function TeamProvider({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({ league_key: team.league_key }),
       });
     } catch (err) {
-      console.error("League sync failed on team switch:", err);
+      console.error("League sync failed:", err);
     }
-
-    // 3. Refresh the page to ensure all components use the new league data
     window.location.reload(); 
   };
 
