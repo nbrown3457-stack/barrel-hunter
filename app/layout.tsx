@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { Geist } from 'next/font/google'; // Optimized font
-import { TeamProvider } from '@/context/TeamContext';
+import { TeamProvider } from '../context/TeamContext';
 import './globals.css';
 
 // 1. Optimized Font Loading
